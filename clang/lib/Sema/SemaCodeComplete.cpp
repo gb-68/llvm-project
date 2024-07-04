@@ -4144,6 +4144,8 @@ CXCursorKind clang::getCursorKindForDecl(const Decl *D) {
     return CXCursor_FriendDecl;
   case Decl::TranslationUnit:
     return CXCursor_TranslationUnit;
+  case Decl::LinkageSpec:
+    return CXCursor_LinkageSpec;
 
   case Decl::Using:
   case Decl::UnresolvedUsingValue:

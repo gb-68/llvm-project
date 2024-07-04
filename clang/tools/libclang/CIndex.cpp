@@ -1940,18 +1940,25 @@ DEFAULT_TYPELOC_IMPL(Auto, Type)
 DEFAULT_TYPELOC_IMPL(BitInt, Type)
 DEFAULT_TYPELOC_IMPL(DependentBitInt, Type)
 
-bool CursorVisitor::VisitCXXRecordDecl(CXXRecordDecl *D) {
-  // Visit the nested-name-specifier, if present.
-  if (NestedNameSpecifierLoc QualifierLoc = D->getQualifierLoc())
-    if (VisitNestedNameSpecifierLoc(QualifierLoc))
-      return true;
-
+bool CursorVisitor::VisitCXXBases(CXXRecordDecl* D) {
   if (D->isCompleteDefinition()) {
     for (const auto &I : D->bases()) {
       if (Visit(cxcursor::MakeCursorCXXBaseSpecifier(&I, TU)))
         return true;
     }
   }
+  return false;
+}
+
+
+bool CursorVisitor::VisitCXXRecordDecl(CXXRecordDecl *D) {
+  // Visit the nested-name-specifier, if present.
+  if (NestedNameSpecifierLoc QualifierLoc = D->getQualifierLoc())
+    if (VisitNestedNameSpecifierLoc(QualifierLoc))
+      return true;
+
+  if (VisitCXXBases(D))
+      return true;
 
   return VisitTagDecl(D);
 }
@@ -5085,6 +5092,588 @@ unsigned clang_visitChildrenWithBlock(CXCursor parent,
   return clang_visitChildren(parent, visitWithBlock, block);
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class SimpleCursorVisitor {
+protected:
+  /// The translation unit we are traversing
+  CXTranslationUnit TU;
+
+  /// The parent_scope cursor whose children we are traversing.
+  CXCursor Parent;
+
+public:
+  explicit SimpleCursorVisitor(CXCursor Parent)
+      : TU(getCursorTU(Parent)), Parent(Parent) {}
+};
+
+class TemplateParametersVisitor : public SimpleCursorVisitor {
+private:
+  CXCursorVisitor Visitor;
+  CXClientData ClientData;
+
+  bool Visit(const NamedDecl *D) {
+    return Visitor(MakeCXCursor(D, TU), Parent, ClientData) ==
+           CXChildVisit_Break;
+  }
+  
+  bool VisitList(const TemplateParameterList &Params) {
+    for (auto &&P : Params)
+      if (Visit(P))
+        return true;
+
+    return false;
+  }
+
+  bool VisitList(const TemplateParameterList *Params) {
+    if (!Params)
+      return false;
+
+    return VisitList(*Params);
+  }
+
+public:
+  TemplateParametersVisitor(CXCursor Parent, CXCursorVisitor Visitor,
+                            CXClientData ClientData)
+      : SimpleCursorVisitor(Parent), Visitor(Visitor), ClientData(ClientData) {}
+
+  bool Visit() {
+    if (!clang_isDeclaration(Parent.kind))
+      return false;
+
+    Decl *D = const_cast<Decl *>(getCursorDecl(Parent));
+    if (!D)
+      return false;
+
+    if (TemplateDecl *TD = dyn_cast_or_null<TemplateDecl>(D))
+      return VisitList(TD->getTemplateParameters());
+
+    if (ClassTemplatePartialSpecializationDecl *CTPSD =
+            dyn_cast_or_null<ClassTemplatePartialSpecializationDecl>(D))
+      return VisitList(CTPSD->getTemplateParameters());
+
+    return false;
+  }
+};
+
+static unsigned clang_Cursor_visitTemplateParameters(CXCursor parent,
+                                                     CXCursorVisitor visitor,
+                                                     CXClientData client_data) {
+  TemplateParametersVisitor Visitor(parent, visitor, client_data);
+  return Visitor.Visit();
+}
+
+namespace clang::cxcursor  {
+
+extern "C++" const TemplateArgument *
+getCursorTemplateArgument(CXCursor Cursor) {
+  return static_cast<const TemplateArgument *>(Cursor.data[1]);
+}
+
+CXCursor MakeCXCursor(const TemplateArgument *TA, const Decl *Parent,
+                                int Index, CXTranslationUnit TU) {
+  assert(TA && TU && "Invalid arguments!");
+  CXCursor C = {CXCursor_TemplateArgument, Index, {Parent, TA, TU}};
+  return C;
+}
+
+} // namespace
+
+
+class TemplateAgrumentsVisitor : public SimpleCursorVisitor {
+private:
+  CXCursorVisitor Visitor;
+  CXClientData ClientData;
+
+  bool Visit(const clang::TemplateArgument *TA, const Decl *D, int I) {
+    return Visitor(cxcursor::MakeCXCursor(TA, D, I, TU), Parent, ClientData) ==
+           CXChildVisit_Break;
+  }
+
+  bool VisitList(const ASTTemplateArgumentListInfo &List, Decl *D) {
+    for (unsigned I = 0, N = List.getNumTemplateArgs(); I != N; ++I) {
+      if (Visit(&List[I].getArgument(), D, I))
+        return true;
+    }
+    return false;
+  }
+
+public:
+  TemplateAgrumentsVisitor(CXCursor Parent, CXCursorVisitor Visitor,
+                           CXClientData ClientData)
+      : SimpleCursorVisitor(Parent), Visitor(Visitor), ClientData(ClientData) {}
+
+  bool Visit() {
+    if (Parent.kind == CXCursor_TemplateArgument) {
+      auto TA = cxcursor::getCursorTemplateArgument(Parent);
+      if (TA->getKind() != TemplateArgument::Pack)
+        return false;
+
+      Decl *D = const_cast<Decl *>(getCursorDecl(Parent));
+      int I = 0;
+      for (auto &&PE : TA->pack_elements()) {
+        if (Visit(&PE, D, I))
+          return true;
+        ++I;
+      }
+      return false;
+    }
+
+    if (!clang_isDeclaration(Parent.kind))
+      return false;
+
+    Decl *D = const_cast<Decl *>(getCursorDecl(Parent));
+    if (!D)
+      return false;
+
+    if (FunctionDecl *FD = dyn_cast_if_present<FunctionDecl>(D)) {
+
+      const ASTTemplateArgumentListInfo *List =
+          FD->getTemplateSpecializationArgsAsWritten();
+      if (!List)
+        return false;
+
+      return VisitList(*List, D);
+    }
+
+    // getTemplateArgsAsWritten get more infos => true decl for
+    // CXType_TemplateTypeParm rather than canonical "type-parameter-x-x"
+    if (ClassTemplatePartialSpecializationDecl *CTPSD =
+            dyn_cast_if_present<ClassTemplatePartialSpecializationDecl>(D)) {
+
+      // Visit the partial specialization arguments.
+      const ASTTemplateArgumentListInfo *List =
+          CTPSD->getTemplateArgsAsWritten();
+
+      if (List)
+        return VisitList(*List, D);
+    }
+
+    if (ClassTemplateSpecializationDecl *CTSD =
+            dyn_cast_if_present<ClassTemplateSpecializationDecl>(D)) {
+
+      const TemplateArgumentList &TAL = CTSD->getTemplateArgs();
+
+      for (unsigned I = 0, N = TAL.size(); I != N; ++I) {
+        if (Visit(&TAL[I], D, I))
+          return true;
+      }
+      return false;
+    }
+    return false;
+  }
+};
+
+
+
+static unsigned clang_Cursor_visitTemplateArguments(CXCursor parent,
+                                             CXCursorVisitor visitor,
+                                             CXClientData client_data) {
+  TemplateAgrumentsVisitor CursorVis(parent, visitor, client_data);
+  return CursorVis.Visit();
+}
+
+static CXXRecordDecl *get_Cursor_CXXRecordDecl(CXCursor parent) {
+  if (!clang_isDeclaration(parent.kind))
+    return nullptr;
+
+  auto *D = const_cast<Decl *>(getCursorDecl(parent));
+  if (!D)
+    return nullptr;
+
+  auto *RD = dyn_cast_or_null<CXXRecordDecl>(D);
+  if (RD) 
+    return RD; 
+  
+  if (ClassTemplateDecl *CT = dyn_cast_or_null<ClassTemplateDecl>(D))
+    return CT->getTemplatedDecl();
+
+  return nullptr;
+}
+
+/*
+unsigned clang_Cursor_visitBases(CXCursor parent_scope, CXEltVisitor visitor,
+                                       CXClientData client_data) {
+  auto *RD = get_Cursor_CXXRecordDecl(parent_scope);
+  if (!RD) 
+    return false;
+
+  if (!RD->isCompleteDefinition())
+    return false;
+  
+  auto TU = getCursorTU(parent_scope);
+
+  for (const auto &I : RD->bases()) {
+    if (visitor(cxcursor::MakeCursorCXXBaseSpecifier(&I, TU), client_data) != CXVisit_Continue)
+      return true;
+  }
+  return false;
+}
+*/
+
+static unsigned clang_Cursor_visitBases(CXCursor parent,
+                                        CXCursorVisitor visitor,
+                                        CXClientData client_data) {
+  if (!clang_isDeclaration(parent.kind))
+    return false;
+
+  CursorVisitor CursorVis(getCursorTU(parent), visitor, client_data,
+                          /*VisitPreprocessorLast=*/false);
+
+  Decl *D = const_cast<Decl *>(getCursorDecl(parent));
+  if (!D)
+    return false;
+
+  if (CXXRecordDecl *RD = get_Cursor_CXXRecordDecl(parent))
+    return CursorVis.VisitCXXBases(RD);
+
+  return false;
+}
+
+
+
+static unsigned clang_Cursor_visitDeclContext(CXCursor parent,
+                                              CXCursorVisitor visitor,
+                                              CXClientData client_data) {
+  if (!clang_isDeclaration(parent.kind))
+    return false;
+
+  CursorVisitor CursorVis(getCursorTU(parent), visitor, client_data,
+                          /*VisitPreprocessorLast=*/false);
+
+  Decl *D = const_cast<Decl *>(getCursorDecl(parent));
+  if (!D)
+    return false;
+
+  if (CXXRecordDecl *RD = get_Cursor_CXXRecordDecl(parent))
+    return CursorVis.VisitDeclContext(RD);
+
+  if (DeclContext *DC = dyn_cast_or_null<DeclContext>(D))
+    return CursorVis.VisitDeclContext(DC);
+
+  return false;
+}
+
+unsigned clang_Cursor_visitSelected(CXCursor parent, CXVisitOption option,
+                                    CXCursorVisitor visitor,
+                                    CXClientData client_data) {
+
+  switch (option) {
+  case CXVisitOption_TemplateArguments:
+    return clang_Cursor_visitTemplateArguments(parent, visitor, client_data);
+  case CXVisitOption_TemplateParameters:
+    return clang_Cursor_visitTemplateParameters(parent, visitor, client_data);
+  case CXVisitOption_Bases:
+    return clang_Cursor_visitBases(parent, visitor, client_data);
+  case CXVisitOption_DeclContext:
+    return clang_Cursor_visitDeclContext(parent, visitor, client_data);
+  }
+
+  return false;
+}
+
+
+
+CXTemplateArgumentKind clang_Cursor_getTemplateArgumentKind_(CXCursor C) {
+  if (C.kind != CXCursor_TemplateArgument)
+      return CXTemplateArgumentKind_Invalid;
+
+  return cxcursor::MakeCXTemplateArgumentKind(
+      cxcursor::getCursorTemplateArgument(C)->getKind());
+}
+
+extern "C++" static std::optional<llvm::APSInt>
+getCursorIntegral(CXCursor C) {
+  if (C.kind != CXCursor_TemplateArgument)
+      return std::nullopt;
+
+  auto TA = cxcursor::getCursorTemplateArgument(C);
+
+  if (TA->getKind() != TemplateArgument::Integral)
+      return std::nullopt;
+
+  return TA->getAsIntegral();
+}
+
+
+static CXIntegral MakeCXIntegral(const llvm::APSInt &Int) {
+  return reinterpret_cast<CXIntegral>(&Int);
+}
+
+static const llvm::APSInt * getIntegral(CXIntegral Int) {
+  return reinterpret_cast<const llvm::APSInt *>(Int);
+}
+
+
+unsigned clang_Cursor_visitIntegral(CXCursor C, CXIntVisitor Visitor,
+                                    CXClientData client_data) { 
+  auto Integral = getCursorIntegral(C);
+  if (!Integral)
+      return false;
+
+  Visitor(MakeCXIntegral(*Integral), client_data);
+  return true;
+}
+
+CXString clang_Integral_getSpelling(CXIntegral Int) {
+  auto Integral = getIntegral(Int);
+  assert(Integral);
+ 
+  SmallVector<char> Result;
+  Integral->toString(Result);
+  return cxstring::createDup(StringRef(Result.data(), Result.size()));
+}
+
+unsigned clang_Integral_isSigned(CXIntegral Int) {
+  auto Integral = getIntegral(Int);
+  assert(Integral);
+  return Integral->isSigned();
+}
+
+unsigned clang_Integral_isRepresentableByInt64(CXIntegral Int) {
+  auto Integral = getIntegral(Int);
+  assert(Integral);
+  return Integral->isRepresentableByInt64();
+}
+
+
+long long clang_Integral_getSigned(CXIntegral Int) {
+  auto Integral = getIntegral(Int);
+  assert(Integral);
+
+  return Integral->getSExtValue();
+}
+
+unsigned long long
+clang_Integral_getUnsigned(CXIntegral Int) {
+  auto Integral = getIntegral(Int);
+  assert(Integral);
+
+  return Integral->getExtValue();
+}
+
+CXCursor clang_Cursor_getDeclaration(CXCursor C) {
+  if (C.kind != CXCursor_TemplateArgument)
+      return clang_getNullCursor();
+
+  auto TA = cxcursor::getCursorTemplateArgument(C);
+
+  switch (TA->getKind()) {
+  case TemplateArgument::Null:
+      return clang_getNullCursor();
+
+  case TemplateArgument::Type:
+      return clang_getNullCursor();
+
+  case TemplateArgument::NullPtr:
+      // TA->getNullPtrType();
+      return clang_getNullCursor();
+
+  case TemplateArgument::Integral:
+      // TA->getAsIntegral();
+      return clang_getNullCursor();
+
+  case TemplateArgument::Template:
+      // TA->getAsTemplateOrTemplatePattern();
+      // TA->getIsDefaulted();
+      return clang_getNullCursor();
+
+  case TemplateArgument::Pack:
+      // TA->pack_elements();
+      return clang_getNullCursor();
+
+  case TemplateArgument::TemplateExpansion:
+      // TA->getAsTemplateOrTemplatePattern()
+      // TA->getNumTemplateExpansions()
+      // TA->getIsDefaulted()
+      return clang_getNullCursor();
+
+  case TemplateArgument::Declaration:
+      return MakeCXCursor(TA->getAsDecl(), getCursorTU(C));
+
+  case TemplateArgument::Expression:
+      // TA->getAsExpr()
+      return clang_getNullCursor();
+  }
+  llvm_unreachable("Invalid TemplateArgument::Kind!");
+}
+
+CXCursor
+clang_Cursor_getExpression(
+    CXCursor C) {
+  if (C.kind != CXCursor_TemplateArgument)
+      return clang_getNullCursor();
+
+  auto TA = cxcursor::getCursorTemplateArgument(C);
+
+  switch (TA->getKind()) {
+  case TemplateArgument::Null:
+      return clang_getNullCursor();
+
+  case TemplateArgument::Type:
+      return clang_getNullCursor();
+
+  case TemplateArgument::NullPtr:
+      // TA->getNullPtrType();
+      return clang_getNullCursor();
+
+  case TemplateArgument::Integral:
+      // TA->getAsIntegral();
+      return clang_getNullCursor();
+
+  case TemplateArgument::Template:
+      // TA->getAsTemplateOrTemplatePattern();
+      // TA->getIsDefaulted();
+      return clang_getNullCursor();
+
+  case TemplateArgument::Pack:
+      // TA->pack_elements();
+      return clang_getNullCursor();
+
+  case TemplateArgument::TemplateExpansion:
+      // TA->getAsTemplateOrTemplatePattern()
+      // TA->getNumTemplateExpansions()
+      // TA->getIsDefaulted()
+      return clang_getNullCursor();
+
+  case TemplateArgument::Declaration:
+      // TA->getAsDecl()
+      return clang_getNullCursor();
+
+  case TemplateArgument::Expression:
+      const Expr * E = TA->getAsExpr();
+      return MakeCXCursor(E, getDeclFromExpr(E), getCursorTU(C));
+  }
+  llvm_unreachable("Invalid TemplateArgument::Kind!");
+}
+
+unsigned clang_isTemplateArgument(enum CXCursorKind Kind) {
+    return Kind == CXCursor_TemplateArgument;
+}
+
+namespace clang::cxcursor {
+
+extern "C++" QualType getTemplateArgumentType(const TemplateArgument *TA) {
+    switch (TA->getKind()) {
+    case TemplateArgument::Null:
+      return QualType();
+
+    case TemplateArgument::Type:
+      return TA->getAsType();
+
+    case TemplateArgument::Declaration:
+      return TA->getParamTypeForDecl();
+
+    case TemplateArgument::NullPtr:
+      return TA->getNullPtrType();
+
+    case TemplateArgument::Integral:
+      return TA->getIntegralType();
+
+    case TemplateArgument::Template:
+      // TA->getAsTemplateOrTemplatePattern()
+      // TA->getIsDefaulted()
+      return QualType(); // TODO ???
+
+    case TemplateArgument::TemplateExpansion:
+      // TA->getAsTemplateOrTemplatePattern()
+      // TA->getNumTemplateExpansions()
+      // TA->getIsDefaulted()
+      return QualType(); // TODO ???
+
+    case TemplateArgument::Expression:
+      return TA->getAsExpr()->getType();
+
+    case TemplateArgument::Pack:
+      // TA->pack_elements()
+      return QualType();
+    }
+    llvm_unreachable("Invalid TemplateArgument::Kind!");
+}
+}
+
+extern "C++" static inline QualType GetQualType(CXType CT) {
+  return QualType::getFromOpaquePtr(CT.data[0]);
+}
+
+static inline CXTranslationUnit GetTU(CXType CT) {
+  return static_cast<CXTranslationUnit>(CT.data[1]);
+}
+
+ class SimpleTypeVisitor {
+protected:
+  /// The translation unit we are traversing
+  CXTranslationUnit TU;
+
+  /// The parent_scope type whose children we are traversing.
+  CXType Parent;
+
+public:
+  explicit SimpleTypeVisitor(CXType Parent)
+      : TU(GetTU(Parent)), Parent(Parent) {}
+};
+
+class TypeTemplateAgrumentsVisitor : public SimpleTypeVisitor {
+private:
+  CXEltVisitor Visitor;
+  CXClientData ClientData;
+
+  bool Visit(const clang::TemplateArgument *TA, const Decl *D, int I) {
+    return Visitor(cxcursor::MakeCXCursor(TA, D, I, TU), ClientData) !=
+           CXVisit_Continue;
+  }
+
+  bool VisitList(const ASTTemplateArgumentListInfo &List, Decl *D) {
+    for (unsigned I = 0, N = List.getNumTemplateArgs(); I != N; ++I) {
+      if (Visit(&List[I].getArgument(), D, I))
+        return true;
+    }
+    return false;
+  }
+
+public:
+  TypeTemplateAgrumentsVisitor(CXType Parent, CXEltVisitor Visitor,
+                               CXClientData ClientData)
+      : SimpleTypeVisitor(Parent), Visitor(Visitor), ClientData(ClientData) {}
+
+  bool Visit() {
+    auto Type = GetQualType(Parent);
+
+    if (const auto *TemplateSpecialization =
+            Type->getAs<TemplateSpecializationType>()) {
+      auto &&Args = TemplateSpecialization->template_arguments();
+      for (unsigned I = 0, N = Args.size(); I != N; ++I) {
+        if (Visit(&Args[I], nullptr, I))
+          return true;
+      }
+      return false;
+    }
+
+    if (const auto *RecordDecl = Type->getAsCXXRecordDecl()) {
+      const auto *TemplateDecl =
+          dyn_cast<ClassTemplateSpecializationDecl>(RecordDecl);
+
+      if (!TemplateDecl)
+        return false;
+
+      auto &&Args = TemplateDecl->getTemplateArgs();
+      for (unsigned I = 0, N = Args.size(); I != N; ++I) {
+        if (Visit(&Args[I], TemplateDecl, I))
+          return true;
+      }
+      return false;
+    }
+    return false;
+  }
+};
+
+unsigned clang_Type_visitTemplateArguments(CXType parent, CXEltVisitor visitor,
+                                           CXClientData client_data) {
+  TypeTemplateAgrumentsVisitor TypeVis(parent, visitor, client_data);
+  return TypeVis.Visit();
+}
+
+
 static CXString getDeclSpelling(const Decl *D) {
   if (!D)
     return cxstring::createEmpty();
@@ -6249,6 +6838,8 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
     return cxstring::createRef("OpenACCComputeConstruct");
   case CXCursor_OpenACCLoopConstruct:
     return cxstring::createRef("OpenACCLoopConstruct");
+  case CXCursor_TemplateArgument:
+    return cxstring::createRef("TemplateArgument");
   }
 
   llvm_unreachable("Unhandled CXCursorKind");
@@ -6924,7 +7515,7 @@ CXCursor clang_getCursorReferenced(CXCursor C) {
   }
 
   case CXCursor_LabelRef:
-    // FIXME: We end up faking the "parent" declaration here because we
+    // FIXME: We end up faking the "parent_scope" declaration here because we
     // don't want to make CXCursor larger.
     return MakeCXCursor(
         getCursorLabelRef(C).first,
@@ -7712,7 +8303,7 @@ AnnotateTokensWorker::DetermineChildActions(CXCursor Cursor) const {
         CXCursor cxChild = MakeCXCursor(DRE, parentDecl, TU);
         actions.push_back({cxChild, PostChildrenAction::Postpone});
 
-        // The parent of the DeclRefExpr, an ImplicitCastExpr, has an equally
+        // The parent_scope of the DeclRefExpr, an ImplicitCastExpr, has an equally
         // wide range as the DeclRefExpr. We can skip visiting this entirely.
         cxChild = MakeCXCursor(ICE, parentDecl, TU);
         actions.push_back({cxChild, PostChildrenAction::Ignore});

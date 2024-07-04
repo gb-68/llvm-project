@@ -23,11 +23,13 @@
 #include "clang/Basic/AddressSpaces.h"
 #include "clang/Frontend/ASTUnit.h"
 #include <optional>
+#include <iostream>
 
 using namespace clang;
 
 static CXTypeKind GetBuiltinTypeKind(const BuiltinType *BT) {
-#define BTCASE(K) case BuiltinType::K: return CXType_##K
+#define BTCASE(K) case BuiltinType::K: return CXType_##K       
+  std::cout << " GetBuiltinTypeKind " << BT->getKind() << "\n";
   switch (BT->getKind()) {
     BTCASE(Void);
     BTCASE(Bool);
@@ -89,6 +91,8 @@ static CXTypeKind GetTypeKind(QualType T) {
     return CXType_Invalid;
 
 #define TKCASE(K) case Type::K: return CXType_##K
+  std::cout << " GetTypeKind " << TP->getTypeClass() << "\n";  
+
   switch (TP->getTypeClass()) {
     case Type::Builtin:
       return GetBuiltinTypeKind(cast<BuiltinType>(TP));
@@ -118,7 +122,12 @@ static CXTypeKind GetTypeKind(QualType T) {
     TKCASE(Pipe);
     TKCASE(Attributed);
     TKCASE(BTFTagAttributed);
-    TKCASE(Atomic);
+    TKCASE(Atomic);      
+
+    TKCASE(TemplateTypeParm);   
+    TKCASE(DependentName);
+    TKCASE(SubstTemplateTypeParm);
+    TKCASE(TemplateSpecialization);
     default:
       return CXType_Unexposed;
   }
@@ -291,6 +300,10 @@ CXType clang_getCursorType(CXCursor C) {
     }
 
     return MakeCXType(QualType(), TU);
+  }
+
+  if (clang_isTemplateArgument(C.kind)) {
+    return MakeCXType(getTemplateArgumentType(getCursorTemplateArgument(C)), TU);
   }
 
   return MakeCXType(QualType(), TU);
@@ -533,6 +546,9 @@ try_again:
     break;
 
   // FIXME: Template type parameters!      
+  case Type::TemplateTypeParm:
+    D = cast<TemplateTypeParmType>(TP)->getDecl();
+    break;
 
   case Type::Elaborated:
     TP = cast<ElaboratedType>(TP)->getNamedType().getTypePtrOrNull();
@@ -547,6 +563,72 @@ try_again:
 
   return cxcursor::MakeCXCursor(D, GetTU(CT));
 }
+
+CXCursor clang_getTypeDeclarationEx(CXType CT) {
+  if (CT.kind == CXType_Invalid)
+    return cxcursor::MakeCXCursorInvalid(CXCursor_NoDeclFound);
+
+  QualType T = GetQualType(CT);
+  const Type *TP = T.getTypePtrOrNull();
+
+  if (!TP)
+    return cxcursor::MakeCXCursorInvalid(CXCursor_NoDeclFound);
+
+  Decl *D = nullptr;
+
+try_again:
+  switch (TP->getTypeClass()) {
+  case Type::Typedef:
+    D = cast<TypedefType>(TP)->getDecl();
+    break;
+  case Type::ObjCObject:
+    D = cast<ObjCObjectType>(TP)->getInterface();
+    break;
+  case Type::ObjCInterface:
+    D = cast<ObjCInterfaceType>(TP)->getDecl();
+    break;
+  case Type::Record:
+  case Type::Enum:
+    D = cast<TagType>(TP)->getDecl();
+    break;
+  case Type::TemplateSpecialization:
+    if (const RecordType *Record = TP->getAs<RecordType>())
+      D = Record->getDecl();
+    else {       
+      //D = cast<TemplateSpecializationType>(TP)
+    }
+    break;
+
+  case Type::Auto:
+  case Type::DeducedTemplateSpecialization:
+    TP = cast<DeducedType>(TP)->getDeducedType().getTypePtrOrNull();
+    if (TP)
+      goto try_again;
+    break;
+
+  case Type::InjectedClassName:
+    D = cast<InjectedClassNameType>(TP)->getDecl();
+    break;
+
+  // FIXME: Template type parameters!
+  case Type::TemplateTypeParm:
+    D = cast<TemplateTypeParmType>(TP)->getDecl();
+    break;
+
+  case Type::Elaborated:
+    TP = cast<ElaboratedType>(TP)->getNamedType().getTypePtrOrNull();
+    goto try_again;
+
+  default:
+    break;
+  }
+
+  if (!D)
+    return cxcursor::MakeCXCursorInvalid(CXCursor_NoDeclFound);
+
+  return cxcursor::MakeCXCursor(D, GetTU(CT));
+}
+
 
 CXString clang_getTypeKindSpelling(enum CXTypeKind K) {
   const char *s = nullptr;
@@ -629,6 +711,10 @@ CXString clang_getTypeKindSpelling(enum CXTypeKind K) {
     TKIND(OCLQueue);
     TKIND(OCLReserveID);
     TKIND(Atomic);
+    TKIND(DependentName);
+    TKIND(TemplateTypeParm);
+    TKIND(SubstTemplateTypeParm);
+    TKIND(TemplateSpecialization);
   }
 #undef TKIND
   return cxstring::createRef(s);
@@ -1176,6 +1262,69 @@ CXType clang_Type_getTemplateArgumentAsType(CXType CT, unsigned index) {
   return MakeCXType(QT.value_or(QualType()), GetTU(CT));
 }
 
+static std::optional<ArrayRef<TemplateArgument>>
+GetTemplateArguments(CXType CT) {
+  QualType T = GetQualType(CT);
+  if (T.isNull())
+    return std::nullopt;
+  
+  return GetTemplateArguments(T);
+}
+
+static std::optional<TemplateArgument>
+clang_Type_getTemplateArgument(CXType CT, unsigned I) {
+  auto TA = GetTemplateArguments(CT);
+  if (!TA)
+    return std::nullopt;
+
+  auto & Args = *TA;
+  if (Args.size() <= I)
+    return std::nullopt;
+
+   return Args[I];
+}
+
+CINDEX_LINKAGE enum CXTemplateArgumentKind
+clang_Type_getTemplateArgumentKind(CXType CT, unsigned I) {
+   auto TA = clang_Type_getTemplateArgument(CT, I);
+   if (!TA)
+    return CXTemplateArgumentKind_Invalid;
+
+   return cxcursor::MakeCXTemplateArgumentKind(TA->getKind());
+}
+
+CINDEX_LINKAGE long long 
+clang_Type_getTemplateArgumentAsValue(CXType CT, unsigned I) {
+   auto TA = clang_Type_getTemplateArgument(CT, I);
+   if (!TA) {
+    assert(0 && "Unable to retrieve TemplateArgument");
+    return 0;
+   }
+
+   if (TA->getKind() != TemplateArgument::Integral) {
+    assert(0 && "Passed template argument is not Integral");
+    return 0;
+   }
+
+   return TA->getAsIntegral().getSExtValue();
+}
+
+CINDEX_LINKAGE unsigned long long
+clang_Type_getTemplateArgumentAsUnsignedValue(CXType CT, unsigned I) {
+   auto TA = clang_Type_getTemplateArgument(CT, I);
+   if (!TA) {
+    assert(0 && "Unable to retrieve TemplateArgument");
+    return 0;
+   }
+
+   if (TA->getKind() != TemplateArgument::Integral) {
+    assert(0 && "Passed template argument is not Integral");
+    return 0;
+   }
+
+   return TA->getAsIntegral().getZExtValue();
+}
+
 CXType clang_Type_getObjCObjectBaseType(CXType CT) {
   QualType T = GetQualType(CT);
   if (T.isNull())
@@ -1312,6 +1461,81 @@ CXType clang_Type_getNamedType(CXType CT){
 
   return MakeCXType(QualType(), GetTU(CT));
 }
+
+CXType clang_Type_getNested(CXType CT) {
+  QualType T = GetQualType(CT);
+  const Type *TP = T.getTypePtrOrNull();
+
+  if (TP && TP->getTypeClass() == Type::DependentName) {
+    auto DNT = cast<DependentNameType>(TP);
+    auto NNS = DNT->getQualifier();
+    auto Id = DNT->getIdentifier();
+
+    auto Name = Id->getName();
+
+    auto NNSKind = NNS->getKind();
+
+    switch (NNSKind) {
+    case NestedNameSpecifier::TypeSpec:
+    case NestedNameSpecifier::TypeSpecWithTemplate:
+      return MakeCXType(QualType(NNS->getAsType(), T.getCVRQualifiers()),
+                        GetTU(CT));
+    case NestedNameSpecifier::Identifier:
+      return MakeCXType(QualType(), GetTU(CT));
+    default:
+      break;
+    }      
+  }
+  return MakeCXType(QualType(), GetTU(CT));
+}
+
+CXCursor clang_Type_getTemplateDeclaration(CXType CT) {
+  QualType T = GetQualType(CT);
+  const Type *TP = T.getTypePtrOrNull();
+
+  if (TP && TP->getTypeClass() == Type::SubstTemplateTypeParm)
+    return cxcursor::MakeCXCursor(
+        cast<SubstTemplateTypeParmType>(TP)->getAssociatedDecl(), GetTU(CT));
+ 
+  return cxcursor::MakeCXCursorInvalid(CXCursor_NoDeclFound);
+}
+
+
+CXCursor clang_Type_getReplacedParameter(CXType CT)
+{
+  QualType T = GetQualType(CT);
+  const Type *TP = T.getTypePtrOrNull();
+
+  if (TP && TP->getTypeClass() == Type::SubstTemplateTypeParm)
+    return cxcursor::MakeCXCursor(
+        cast<SubstTemplateTypeParmType>(TP)->getReplacedParameter(), GetTU(CT));
+
+  return cxcursor::MakeCXCursorInvalid(CXCursor_NoDeclFound);
+}
+
+CXType clang_Type_getReplacementType(CXType CT) {
+  QualType T = GetQualType(CT);
+  const Type *TP = T.getTypePtrOrNull();
+
+  if (TP && TP->getTypeClass() == Type::SubstTemplateTypeParm)
+    return MakeCXType(cast<SubstTemplateTypeParmType>(TP)->getReplacementType(), GetTU(CT));
+
+  return MakeCXType(QualType(), GetTU(CT));
+}
+
+
+CXType clang_Type_getUnderlyingType(CXType CT) {
+  QualType T = GetQualType(CT);
+  if (T.isNull())
+    return MakeCXType(QualType(), GetTU(CT));
+
+  if (const SubstTemplateTypeParmType *STTPT =
+          T->getAs<SubstTemplateTypeParmType>())
+    return MakeCXType(STTPT->getReplacementType(), GetTU(CT));
+
+  return MakeCXType(QualType(), GetTU(CT));
+}
+
 
 unsigned clang_Type_isTransparentTagTypedef(CXType TT){
   QualType T = GetQualType(TT);

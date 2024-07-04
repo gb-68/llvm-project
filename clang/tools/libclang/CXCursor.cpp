@@ -1459,14 +1459,9 @@ static int clang_Cursor_getTemplateArgument(CXCursor C, unsigned I,
   return CXGetTemplateArgumentStatus_BadDeclCast;
 }
 
-enum CXTemplateArgumentKind clang_Cursor_getTemplateArgumentKind(CXCursor C,
-                                                                 unsigned I) {
-  TemplateArgument TA;
-  if (clang_Cursor_getTemplateArgument(C, I, &TA)) {
-    return CXTemplateArgumentKind_Invalid;
-  }
-
-  switch (TA.getKind()) {
+enum CXTemplateArgumentKind
+cxcursor::MakeCXTemplateArgumentKind(TemplateArgument::ArgKind AK) {
+  switch (AK) {
   case TemplateArgument::Null:
     return CXTemplateArgumentKind_Null;
   case TemplateArgument::Type:
@@ -1489,8 +1484,17 @@ enum CXTemplateArgumentKind clang_Cursor_getTemplateArgumentKind(CXCursor C,
   case TemplateArgument::Pack:
     return CXTemplateArgumentKind_Pack;
   }
-
   return CXTemplateArgumentKind_Invalid;
+}
+
+enum CXTemplateArgumentKind clang_Cursor_getTemplateArgumentKind(CXCursor C,
+                                                                 unsigned I) {
+  TemplateArgument TA;
+  if (clang_Cursor_getTemplateArgument(C, I, &TA)) {
+    return CXTemplateArgumentKind_Invalid;
+  }
+
+  return cxcursor::MakeCXTemplateArgumentKind(TA.getKind());
 }
 
 CXType clang_Cursor_getTemplateArgumentType(CXCursor C, unsigned I) {
@@ -1539,6 +1543,66 @@ unsigned long long clang_Cursor_getTemplateArgumentUnsignedValue(CXCursor C,
 
   return TA.getAsIntegral().getZExtValue();
 }
+
+const NamedDecl *getTemplated(CXCursor C) {
+
+  switch (C.kind) {
+  case CXCursor_ClassTemplate:
+  case CXCursor_FunctionTemplate: {
+    if (const TemplateDecl *Template =
+            dyn_cast_or_null<TemplateDecl>(getCursorDecl(C)))
+      return Template->getTemplatedDecl();
+  } break;
+
+  case CXCursor_ClassTemplatePartialSpecialization: {
+    if (const ClassTemplatePartialSpecializationDecl *PartialSpec =
+            dyn_cast_or_null<ClassTemplatePartialSpecializationDecl>(
+                getCursorDecl(C)))
+      return const_cast<ClassTemplatePartialSpecializationDecl *>(PartialSpec);
+  } break;
+  default:
+    break;
+  }
+
+  return nullptr;
+}
+
+CXCursor clang_Cursor_getTemplated(CXCursor C) {
+    auto Result = getTemplated(C);
+    if (Result)
+      return MakeCXCursor(Result, getCursorTU(C));
+
+    return clang_getNullCursor();
+}
+
+unsigned clang_Cursor_isCompleteDefinition(CXCursor C) {
+
+  if (!clang_isDeclaration(C.kind))
+    return 0;
+  
+  const Decl * D = getCursorDecl(C);
+  if (const TagDecl *TD = dyn_cast_or_null<TagDecl>(D))
+    return TD->isCompleteDefinition();
+
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D))
+    return FD->isThisDeclarationADefinition();
+
+  auto Templated = getTemplated(C);
+  if (Templated) {
+    if (const TagDecl *TD = dyn_cast_or_null<TagDecl>(Templated))
+      return TD->isCompleteDefinition();
+
+    if (const TagDecl *TD = dyn_cast_or_null<TagDecl>(Templated))
+      return TD->isCompleteDefinition();
+  }
+  return 0;
+}
+
+
+
+
+
+
 
 //===----------------------------------------------------------------------===//
 // CXCursorSet.

@@ -15,6 +15,7 @@
 
 #include "clang-c/Index.h"
 #include "clang/Basic/SourceLocation.h"
+#include "clang/AST/TemplateBase.h"
 #include "llvm/ADT/PointerUnion.h"
 #include <utility>
 
@@ -238,10 +239,13 @@ const Decl *getCursorDecl(CXCursor Cursor);
 const Expr *getCursorExpr(CXCursor Cursor);
 const Stmt *getCursorStmt(CXCursor Cursor);
 const Attr *getCursorAttr(CXCursor Cursor);
+const TemplateArgument *getCursorTemplateArgument(CXCursor Cursor);
 
 ASTContext &getCursorContext(CXCursor Cursor);
 ASTUnit *getCursorASTUnit(CXCursor Cursor);
 CXTranslationUnit getCursorTU(CXCursor Cursor);
+
+QualType getTemplateArgumentType(const TemplateArgument *TA);
 
 void getOverriddenCursors(CXCursor cursor,
                           SmallVectorImpl<CXCursor> &overridden);
@@ -286,6 +290,11 @@ inline bool operator!=(CXCursor X, CXCursor Y) { return !(X == Y); }
 /// Return true if the cursor represents a declaration that is the
 /// first in a declaration group.
 bool isFirstInDeclGroup(CXCursor C);
+
+enum CXTemplateArgumentKind
+MakeCXTemplateArgumentKind(TemplateArgument::ArgKind AK);
+
+
 
 } // namespace cxcursor
 } // namespace clang
