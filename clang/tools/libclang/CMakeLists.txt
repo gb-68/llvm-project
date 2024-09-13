@@ -40,6 +40,7 @@ set(SOURCES
   CXStoredDiagnostic.cpp
   CXString.cpp
   CXType.cpp
+  CXNested.cpp
   Indexing.cpp
   FatalErrorHandler.cpp
   Rewrite.cpp
@@ -53,6 +54,7 @@ set(SOURCES
   CXString.h
   CXTranslationUnit.h
   CXType.h
+  CXNested.h
   Index_Internal.h
   ../../include/clang-c/Index.h
   )
