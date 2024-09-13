@@ -47,12 +47,22 @@ enum CX_CXXAccessSpecifier clang_getCXXAccessSpecifier(CXCursor C) {
   llvm_unreachable("Invalid AccessSpecifier!");
 }
 
+unsigned clang_isCXXBaseSpecifierDefault(CXCursor C) {
+  if (C.kind == CXCursor_CXXBaseSpecifier)
+    return getCursorCXXBaseSpecifier(C)->getAccessSpecifierAsWritten() == AS_none;
+
+  return 0;
+}
+
+
 enum CXCursorKind clang_getTemplateCursorKind(CXCursor C) {
   using namespace clang::cxcursor;
   
   switch (C.kind) {
-  case CXCursor_ClassTemplate: 
+  case CXCursor_VarTemplateDecl:
+  case CXCursor_ClassTemplate:
   case CXCursor_FunctionTemplate:
+  case CXCursor_TypeAliasTemplateDecl: 
     if (const TemplateDecl *Template
                            = dyn_cast_or_null<TemplateDecl>(getCursorDecl(C)))
       return MakeCXCursor(Template->getTemplatedDecl(), getCursorTU(C)).kind;
@@ -74,6 +84,11 @@ enum CXCursorKind clang_getTemplateCursorKind(CXCursor C) {
         return CXCursor_NoDeclFound;
       }
     }
+    break;
+
+  case CXCursor_VarTemplatePartialSpecialization:
+  case CXCursor_VarTemplateFullSpecialization: 
+      return CXCursor_VarDecl;
     break;
       
   default:
@@ -113,8 +128,12 @@ CXCursor clang_getSpecializedCursorTemplate(CXCursor C) {
     if (!Template)
       Template = Function->getInstantiatedFromMemberFunction();
   } else if (const VarDecl *Var = dyn_cast<VarDecl>(D)) {
-    if (Var->isStaticDataMember())
+    if (Var->isStaticDataMember()) {
       Template = Var->getInstantiatedFromStaticDataMember();
+    } else if (const VarTemplateSpecializationDecl *Tmpl =
+                   dyn_cast<VarTemplateSpecializationDecl>(D)) {
+      Template = Tmpl->getSpecializedTemplate();
+    }
   } else if (const RedeclarableTemplateDecl *Tmpl
                                         = dyn_cast<RedeclarableTemplateDecl>(D))
     Template = Tmpl->getInstantiatedFromMemberTemplate();
