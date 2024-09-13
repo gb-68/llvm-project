@@ -15,6 +15,7 @@
 
 #include "clang-c/Index.h"
 #include "clang/Basic/SourceLocation.h"
+#include "clang/AST/TemplateBase.h"
 #include "llvm/ADT/PointerUnion.h"
 #include <utility>
 
@@ -42,6 +43,7 @@ class TemplateName;
 class TypeDecl;
 class VarDecl;
 class IdentifierInfo;
+class MacroInfo;
 
 namespace cxcursor {
 
@@ -56,6 +58,12 @@ CXCursor MakeCXCursor(const clang::Stmt *S, const clang::Decl *Parent,
                       CXTranslationUnit TU,
                       SourceRange RegionOfInterest = SourceRange());
 CXCursor MakeCXCursorInvalid(CXCursorKind K, CXTranslationUnit TU = nullptr);
+
+const TemplateArgument *getCursorTemplateArgument(CXCursor Cursor);
+
+CXCursor MakeTemplateArgumentCursor(const TemplateArgument *TA,
+                                    const Decl *Parent, int Index,
+                                    CXTranslationUnit TU);
 
 /// Create an Objective-C superclass reference at the given location.
 CXCursor MakeCursorObjCSuperClassRef(ObjCInterfaceDecl *Super,
@@ -195,6 +203,15 @@ static inline MacroExpansionCursor getCursorMacroExpansion(CXCursor C) {
   return C;
 }
 
+/// Create a MacroInfo cursor.
+CXCursor MakeMacroInfoCursor(const MacroInfo *MI, CXTranslationUnit TU); 
+
+/// Create a IdentifierInfo cursor.
+CXCursor MakeIdentifierInfoCursor(const IdentifierInfo *II, CXTranslationUnit TU); 
+
+/// Unpack a given Identifier cursor to retrieve its IdentifierInfo
+const IdentifierInfo *getCursorIdentifier(CXCursor C);
+
 /// Create an inclusion directive cursor.
 CXCursor MakeInclusionDirectiveCursor(InclusionDirective *,
                                       CXTranslationUnit TU);
@@ -238,10 +255,13 @@ const Decl *getCursorDecl(CXCursor Cursor);
 const Expr *getCursorExpr(CXCursor Cursor);
 const Stmt *getCursorStmt(CXCursor Cursor);
 const Attr *getCursorAttr(CXCursor Cursor);
+const TemplateArgument *getCursorTemplateArgument(CXCursor Cursor);
 
 ASTContext &getCursorContext(CXCursor Cursor);
 ASTUnit *getCursorASTUnit(CXCursor Cursor);
 CXTranslationUnit getCursorTU(CXCursor Cursor);
+
+QualType getTemplateArgumentType(const TemplateArgument *TA);
 
 void getOverriddenCursors(CXCursor cursor,
                           SmallVectorImpl<CXCursor> &overridden);
@@ -286,6 +306,11 @@ inline bool operator!=(CXCursor X, CXCursor Y) { return !(X == Y); }
 /// Return true if the cursor represents a declaration that is the
 /// first in a declaration group.
 bool isFirstInDeclGroup(CXCursor C);
+
+enum CXTemplateArgumentKind
+MakeCXTemplateArgumentKind(TemplateArgument::ArgKind AK);
+
+
 
 } // namespace cxcursor
 } // namespace clang

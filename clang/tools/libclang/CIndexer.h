@@ -147,6 +147,9 @@ private:
     const MacroInfo *getMacroInfo(const MacroDefinitionRecord *MacroDef,
                                   CXTranslationUnit TU);
 
+    /// Retrieves the corresponding MacroInfo of a Cursor.
+    const MacroInfo *getMacroInfo(CXCursor C);
+
     /// If \c Loc resides inside the definition of \c MI and it points at
     /// an identifier that has ever been a macro name, this returns the latest
     /// MacroDefinitionRecord for that name, otherwise it returns NULL.

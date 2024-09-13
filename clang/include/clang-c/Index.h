@@ -2233,8 +2233,11 @@ enum CXCursorKind {
   CXCursor_MacroExpansion = 502,
   CXCursor_MacroInstantiation = CXCursor_MacroExpansion,
   CXCursor_InclusionDirective = 503,
+  CXCursor_MacroInfo = 504,
+  CXCursor_Identifier = 505,
+
   CXCursor_FirstPreprocessing = CXCursor_PreprocessingDirective,
-  CXCursor_LastPreprocessing = CXCursor_InclusionDirective,
+  CXCursor_LastPreprocessing = CXCursor_MacroInfo,
 
   /* Extra Declarations */
   /**
@@ -2254,14 +2257,31 @@ enum CXCursorKind {
    * a concept declaration.
    */
   CXCursor_ConceptDecl = 604,
+  /**
+   * a variable template declaration.
+   */
+  CXCursor_VarTemplateDecl = 605,
+  /**
+   * a variable template full specialization declaration.
+   */
+  CXCursor_VarTemplateFullSpecialization = 606,
+  /**
+   * a variable template partial specialization declaration.
+   */
+  CXCursor_VarTemplatePartialSpecialization = 607,
 
   CXCursor_FirstExtraDecl = CXCursor_ModuleImportDecl,
-  CXCursor_LastExtraDecl = CXCursor_ConceptDecl,
+  CXCursor_LastExtraDecl = CXCursor_VarTemplatePartialSpecialization,
 
   /**
    * A code completion overload candidate.
    */
-  CXCursor_OverloadCandidate = 700
+  CXCursor_OverloadCandidate = 700,
+
+  /**
+   * A template argument.
+   */
+  CXCursor_TemplateArgument = 800,
 };
 
 /**
@@ -2982,7 +3002,13 @@ enum CXTypeKind {
 
   // HLSL Types
   CXType_HLSLResource = 179,
-  CXType_HLSLAttributedResource = 180
+  CXType_HLSLAttributedResource = 180, 
+  
+  CXType_DependentName = 200,
+  CXType_TemplateTypeParm = 201,
+  CXType_SubstTemplateTypeParm = 202,
+  CXType_TemplateSpecialization = 203,
+  CXType_Decltype = 204
 };
 
 /**
@@ -3265,6 +3291,11 @@ CINDEX_LINKAGE CXType clang_getCanonicalType(CXType T);
 CINDEX_LINKAGE unsigned clang_isConstQualifiedType(CXType T);
 
 /**
+ * Get from a CXCursor that is a macro, a MacroInfo CXCursor (optimized access for Macro interrogation)
+ */
+CINDEX_LINKAGE CXCursor clang_Cursor_getMacroInfo(CXCursor C);
+
+/**
  * Determine whether a  CXCursor that is a macro, is
  * function like.
  */
@@ -3518,6 +3549,74 @@ CINDEX_LINKAGE long long clang_getArraySize(CXType T);
  */
 CINDEX_LINKAGE CXType clang_Type_getNamedType(CXType T);
 
+CINDEX_LINKAGE CXType clang_Type_getDeducedType(CXType CT);
+
+enum CXTypeKeyword {
+  CXTypeKeyword_Struct,
+  CXTypeKeyword_Interface,
+  CXTypeKeyword_Union,
+  CXTypeKeyword_Class,
+  CXTypeKeyword_Enum,
+  CXTypeKeyword_Typename,
+  CXTypeKeyword_None
+};
+
+CINDEX_LINKAGE CXTypeKeyword clang_Type_getKeyword(CXType T);
+
+CINDEX_LINKAGE CXString clang_TypeKeyword_getSpelling(CXTypeKeyword TK);
+
+
+enum CXNestedKind {
+  CXNested_Invalid = -1,
+
+  CXNested_Identifier,
+  CXNested_Namespace,
+  CXNested_NamespaceAlias,
+  CXNested_TypeSpec,
+  CXNested_TypeSpecWithTemplate,
+  CXNested_Global,
+  CXNested_Super,
+
+  CXNested_DependentNameType = 100,
+  CXNested_DependentTemplateSpecializationType,
+  CXNested_DependentTemplateName,
+};
+
+typedef struct {
+  enum CXNestedKind kind;
+  void *data[2];
+} CXNested;
+
+struct CXIdentifier_;
+
+typedef const struct CXIdentifier_ *CXIdentifier;
+
+
+CINDEX_LINKAGE CXNested clang_Cursor_getDependentName(CXCursor CC);
+CINDEX_LINKAGE CXNested clang_Type_getDependentName(CXType CT);
+
+
+
+CINDEX_LINKAGE CXNestedKind clang_Nested_getKind(CXNested CN);
+
+/**
+ * Retrieve the prefixe nested part of a nested.
+ *
+ * If an invalid nested is passed in, an invalid CXNested is returned.
+ */
+CINDEX_LINKAGE CXNested clang_Nested_getPrefix(CXNested CN);
+
+/**
+ * Retrieve the identifier part of a nested.
+ *
+ * If an invalid nested is passed in, a null CXIdentifier is returned.
+ */
+CINDEX_LINKAGE CXIdentifier clang_Nested_getIdentifier(CXNested CN);
+
+CINDEX_LINKAGE CXType clang_Nested_getType(CXNested CN);     
+
+CINDEX_LINKAGE CXString clang_Identifier_getName(CXIdentifier CI);
+
 /**
  * Determine if a typedef is 'transparent' tag.
  *
@@ -3717,6 +3816,29 @@ CINDEX_LINKAGE int clang_Type_getNumTemplateArguments(CXType T);
 CINDEX_LINKAGE CXType clang_Type_getTemplateArgumentAsType(CXType T,
                                                            unsigned i);
 
+
+CINDEX_LINKAGE enum CXTemplateArgumentKind
+clang_Type_getTemplateArgumentKind(CXType CT, unsigned I);
+
+CINDEX_LINKAGE long long clang_Type_getTemplateArgumentAsValue(CXType CT,
+                                                             unsigned I);
+CINDEX_LINKAGE unsigned long long
+clang_Type_getTemplateArgumentAsUnsignedValue(CXType CT, unsigned I);
+
+CINDEX_LINKAGE CXCursor clang_Type_getTemplateDeclaration(CXType CT);
+
+CINDEX_LINKAGE CXCursor clang_Type_getReplacedParameter(CXType CT);
+CINDEX_LINKAGE CXType clang_Type_getReplacementType(CXType CT);
+
+
+CINDEX_LINKAGE CXType clang_Type_getUnderlyingType(CXType CT);
+
+
+CINDEX_LINKAGE CXCursor clang_Cursor_getTemplated(CXCursor C);
+
+
+CINDEX_LINKAGE unsigned clang_Cursor_isCompleteDefinition(CXCursor C);
+
 /**
  * Retrieve the ref-qualifier kind of a function or method.
  *
@@ -3750,6 +3872,12 @@ enum CX_CXXAccessSpecifier {
  * specifier or access specifier, the specifier itself is returned.
  */
 CINDEX_LINKAGE enum CX_CXXAccessSpecifier clang_getCXXAccessSpecifier(CXCursor);
+
+/**
+ * Returns 1 if the base class specified by the cursor with kind
+ *   CX_CXXBaseSpecifier has no access control specified.
+ */
+CINDEX_LINKAGE unsigned clang_isCXXBaseSpecifierDefault(CXCursor);
 
 /**
  * Represents the storage classes as declared in the source. CX_SC_Invalid
@@ -4896,6 +5024,13 @@ CINDEX_LINKAGE void clang_tokenize(CXTranslationUnit TU, CXSourceRange Range,
  */
 CINDEX_LINKAGE void clang_annotateTokens(CXTranslationUnit TU, CXToken *Tokens,
                                          unsigned NumTokens, CXCursor *Cursors);
+
+/**
+ * Get the replacement tokens of a Macro.
+ */
+CINDEX_LINKAGE void clang_Cursor_macroReplacementTokens(CXCursor C,
+                                                        CXToken **Tokens,
+                                                        unsigned *NumTokens);
 
 /**
  * Free the given set of tokens.
@@ -6599,6 +6734,63 @@ typedef enum CXVisitorResult (*CXFieldVisitor)(CXCursor C,
  */
 CINDEX_LINKAGE unsigned clang_Type_visitFields(CXType T, CXFieldVisitor visitor,
                                                CXClientData client_data);
+
+
+
+typedef enum CXVisitorResult (*CXEltVisitor)(CXCursor C,
+                                             CXClientData client_data);
+
+struct CXIntegral_;
+
+typedef const struct CXIntegral_ *CXIntegral;
+
+typedef void (*CXIntVisitor)(CXIntegral Integral, CXClientData client_data);
+
+
+typedef enum {
+  CXVisitOption_TemplateArguments = 1,
+  CXVisitOption_TemplateParameters = 2,
+  CXVisitOption_Bases = 3,
+  CXVisitOption_DeclContext = 4,
+} CXVisitOption;
+
+
+CINDEX_LINKAGE unsigned clang_Cursor_visitSelected(CXCursor parent, CXVisitOption option,
+                                                   CXCursorVisitor visitor,
+                                                   CXClientData client_data);
+
+CINDEX_LINKAGE unsigned
+clang_Type_visitTemplateArguments(CXType parent, CXEltVisitor visitor,
+                                  CXClientData client_data);
+
+CINDEX_LINKAGE CXTemplateArgumentKind
+clang_Cursor_getTemplateArgumentKind_(CXCursor C);
+
+
+
+CINDEX_LINKAGE unsigned
+clang_Type_visitTemplateArguments(CXType parent, CXEltVisitor visitor,
+                                  CXClientData client_data);
+
+
+CINDEX_LINKAGE unsigned clang_Cursor_visitIntegral(CXCursor C,
+                                                   CXIntVisitor Visitor,
+                                                   CXClientData client_data);
+
+CINDEX_LINKAGE CXString clang_Integral_getSpelling(CXIntegral Int);
+CINDEX_LINKAGE unsigned clang_Integral_isSigned(CXIntegral Int);
+CINDEX_LINKAGE unsigned clang_Integral_isRepresentableByInt64(CXIntegral Int);
+CINDEX_LINKAGE long long clang_Integral_getSigned(CXIntegral Int);
+CINDEX_LINKAGE unsigned long long clang_Integral_getUnsigned(CXIntegral Int);
+
+CINDEX_LINKAGE unsigned clang_isTemplateArgument(enum CXCursorKind Kind);
+
+CINDEX_LINKAGE CXCursor clang_Cursor_getDeclaration(CXCursor C);
+CINDEX_LINKAGE CXCursor clang_Cursor_getExpression(CXCursor C);
+CINDEX_LINKAGE CXCursor clang_Type_getExpression(CXType CT); 
+
+
+
 
 /**
  * Describes the kind of binary operators.

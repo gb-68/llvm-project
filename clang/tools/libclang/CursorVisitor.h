@@ -207,6 +207,7 @@ public:
   bool VisitTypeAliasDecl(TypeAliasDecl *D);
   bool VisitAttributes(Decl *D);
   bool VisitBlockDecl(BlockDecl *B);
+  bool VisitCXXBases(CXXRecordDecl *D);
   bool VisitCXXRecordDecl(CXXRecordDecl *D);
   std::optional<bool> shouldVisitCursor(CXCursor C);
   bool VisitDeclContext(DeclContext *DC);
