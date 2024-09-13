@@ -16,6 +16,7 @@
 #include "CXString.h"
 #include "CXTranslationUnit.h"
 #include "CXType.h"
+#include "CIndexer.h"
 #include "clang-c/Index.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/Decl.h"
@@ -336,7 +337,6 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
   case Stmt::RecoveryExprClass:
   case Stmt::SYCLUniqueStableNameExprClass:
   case Stmt::EmbedExprClass:
-  case Stmt::HLSLOutArgExprClass:
     K = CXCursor_UnexposedExpr;
     break;
 
@@ -674,12 +674,6 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
   case Stmt::OMPUnrollDirectiveClass:
     K = CXCursor_OMPUnrollDirective;
     break;
-  case Stmt::OMPReverseDirectiveClass:
-    K = CXCursor_OMPReverseDirective;
-    break;
-  case Stmt::OMPInterchangeDirectiveClass:
-    K = CXCursor_OMPTileDirective;
-    break;
   case Stmt::OMPForDirectiveClass:
     K = CXCursor_OMPForDirective;
     break;
@@ -889,15 +883,24 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
     break;
   case Stmt::BuiltinBitCastExprClass:
     K = CXCursor_BuiltinBitCastExpr;
-    break;
-  case Stmt::OMPAssumeDirectiveClass:
-    K = CXCursor_OMPAssumeDirective;
-    break;
   }
 
   CXCursor C = {K, 0, {Parent, S, TU}};
   return C;
 }
+
+const TemplateArgument *cxcursor::getCursorTemplateArgument(CXCursor Cursor) {
+  return static_cast<const TemplateArgument *>(Cursor.data[1]);
+}
+
+CXCursor cxcursor::MakeTemplateArgumentCursor(const TemplateArgument *TA,
+                                    const Decl *Parent, int Index,
+                      CXTranslationUnit TU) {
+  assert(TA && TU && "Invalid arguments!");
+  CXCursor C = {CXCursor_TemplateArgument, Index, {Parent, TA, TU}};
+  return C;
+}
+
 
 CXCursor cxcursor::MakeCursorObjCSuperClassRef(ObjCInterfaceDecl *Super,
                                                SourceLocation Loc,
@@ -1100,6 +1103,25 @@ SourceRange cxcursor::MacroExpansionCursor::getSourceRange() const {
   if (isPseudo())
     return getPseudoLoc();
   return getAsMacroExpansion()->getSourceRange();
+}
+
+CXCursor cxcursor::MakeMacroInfoCursor(const MacroInfo *MI,
+                                       CXTranslationUnit TU) {
+  assert(MI && TU && "Invalid arguments!");
+  CXCursor C = {CXCursor_MacroInfo, 0, {MI, nullptr, TU}};
+  return C;
+}
+
+CXCursor cxcursor::MakeIdentifierInfoCursor(const IdentifierInfo *II,
+                                  CXTranslationUnit TU) {
+  assert(II && TU && "Invalid arguments!");
+  CXCursor C = {CXCursor_Identifier, 0, {II, nullptr, TU}};
+  return C;
+}
+
+const IdentifierInfo *cxcursor::getCursorIdentifier(CXCursor C) {
+  assert(C.kind == CXCursor_Identifier);
+  return static_cast<const IdentifierInfo *>(C.data[0]);
 }
 
 CXCursor cxcursor::MakeInclusionDirectiveCursor(InclusionDirective *ID,
@@ -1348,6 +1370,12 @@ int clang_Cursor_getNumArguments(CXCursor C) {
     }
   }
 
+  if (clang_isPreprocessing(C.kind)) {         
+      if (auto MI = clang::cxindex::getMacroInfo(C)) {
+      return MI->isVariadic() ? MI->getNumParams() - 1 : MI->getNumParams();
+    }
+  }
+
   return -1;
 }
 
@@ -1377,6 +1405,15 @@ CXCursor clang_Cursor_getArgument(CXCursor C, unsigned i) {
       if (i < CE->getNumArgs()) {
         return cxcursor::MakeCXCursor(CE->getArg(i), getCursorDecl(C),
                                       cxcursor::getCursorTU(C));
+      }
+    }
+  }
+ 
+  if (clang_isPreprocessing(C.kind)) {
+    if (auto MI = clang::cxindex::getMacroInfo(C)) {
+      if (i < MI->getNumParams()) {
+        return cxcursor::MakeIdentifierInfoCursor(MI->params()[i],
+                                                  cxcursor::getCursorTU(C));
       }
     }
   }
@@ -1470,14 +1507,9 @@ static int clang_Cursor_getTemplateArgument(CXCursor C, unsigned I,
   return CXGetTemplateArgumentStatus_BadDeclCast;
 }
 
-enum CXTemplateArgumentKind clang_Cursor_getTemplateArgumentKind(CXCursor C,
-                                                                 unsigned I) {
-  TemplateArgument TA;
-  if (clang_Cursor_getTemplateArgument(C, I, &TA)) {
-    return CXTemplateArgumentKind_Invalid;
-  }
-
-  switch (TA.getKind()) {
+enum CXTemplateArgumentKind
+cxcursor::MakeCXTemplateArgumentKind(TemplateArgument::ArgKind AK) {
+  switch (AK) {
   case TemplateArgument::Null:
     return CXTemplateArgumentKind_Null;
   case TemplateArgument::Type:
@@ -1500,8 +1532,17 @@ enum CXTemplateArgumentKind clang_Cursor_getTemplateArgumentKind(CXCursor C,
   case TemplateArgument::Pack:
     return CXTemplateArgumentKind_Pack;
   }
-
   return CXTemplateArgumentKind_Invalid;
+}
+
+enum CXTemplateArgumentKind clang_Cursor_getTemplateArgumentKind(CXCursor C,
+                                                                 unsigned I) {
+  TemplateArgument TA;
+  if (clang_Cursor_getTemplateArgument(C, I, &TA)) {
+    return CXTemplateArgumentKind_Invalid;
+  }
+
+  return cxcursor::MakeCXTemplateArgumentKind(TA.getKind());
 }
 
 CXType clang_Cursor_getTemplateArgumentType(CXCursor C, unsigned I) {
@@ -1550,6 +1591,86 @@ unsigned long long clang_Cursor_getTemplateArgumentUnsignedValue(CXCursor C,
 
   return TA.getAsIntegral().getZExtValue();
 }
+
+static const NamedDecl *getTemplated(CXCursor C) {
+
+  switch (C.kind) {
+  case CXCursor_VarTemplateDecl:
+  case CXCursor_ClassTemplate:
+  case CXCursor_FunctionTemplate:
+  case CXCursor_TypeAliasTemplateDecl: {
+    if (const TemplateDecl *Template =
+            dyn_cast_or_null<TemplateDecl>(getCursorDecl(C)))
+      return Template->getTemplatedDecl();
+  } break;
+
+  case CXCursor_ClassTemplatePartialSpecialization: {
+    if (const ClassTemplatePartialSpecializationDecl *PartialSpec =
+            dyn_cast_or_null<ClassTemplatePartialSpecializationDecl>(
+                getCursorDecl(C)))
+      return PartialSpec;
+  } break;
+
+  case CXCursor_VarTemplatePartialSpecialization: {
+    if (const VarTemplatePartialSpecializationDecl *PartialSpec =
+            dyn_cast_or_null<VarTemplatePartialSpecializationDecl>(
+                getCursorDecl(C)))
+      return PartialSpec;
+  } break;
+
+  case CXCursor_VarTemplateFullSpecialization: {
+    if (const VarTemplateSpecializationDecl *PartialSpec =
+            dyn_cast_or_null<VarTemplateSpecializationDecl>(getCursorDecl(C)))
+      return PartialSpec;
+  } break;
+
+  default:
+    break;
+  }
+
+  return nullptr;
+}
+
+CXCursor clang_Cursor_getTemplated(CXCursor C) {
+    auto Result = getTemplated(C);
+    if (Result)
+      return MakeCXCursor(Result, getCursorTU(C));
+
+    return clang_getNullCursor();
+}
+
+static unsigned isCompleteDefinition(const Decl *D) {
+    if (const TagDecl *TD = dyn_cast_or_null<TagDecl>(D))
+      return TD->isThisDeclarationADefinition();
+
+    if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D))
+      return FD->isThisDeclarationADefinition();
+
+    // FIXME?: TentativeDefinition not a complete definition
+    if (const VarDecl *VD = dyn_cast_or_null<VarDecl>(D))
+      return VD->isThisDeclarationADefinition() == VarDecl::Definition; 
+
+    return 0;
+}
+
+unsigned clang_Cursor_isCompleteDefinition(CXCursor C) {
+    if (!clang_isDeclaration(C.kind))
+      return 0;
+
+    auto Templated = getTemplated(C);
+    if (Templated) {
+      return isCompleteDefinition(Templated);
+    } else {
+      const Decl *D = getCursorDecl(C);
+      return isCompleteDefinition(D);
+    }
+}
+
+
+
+
+
+
 
 //===----------------------------------------------------------------------===//
 // CXCursorSet.

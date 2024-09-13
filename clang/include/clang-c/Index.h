@@ -2146,18 +2146,6 @@ enum CXCursorKind {
    */
   CXCursor_OMPScopeDirective = 306,
 
-  /** OpenMP reverse directive.
-   */
-  CXCursor_OMPReverseDirective = 307,
-
-  /** OpenMP interchange directive.
-   */
-  CXCursor_OMPInterchangeDirective = 308,
-
-  /** OpenMP assume directive.
-   */
-  CXCursor_OMPAssumeDirective = 309,
-
   /** OpenACC Compute Construct.
    */
   CXCursor_OpenACCComputeConstruct = 320,
@@ -2233,8 +2221,11 @@ enum CXCursorKind {
   CXCursor_MacroExpansion = 502,
   CXCursor_MacroInstantiation = CXCursor_MacroExpansion,
   CXCursor_InclusionDirective = 503,
+  CXCursor_MacroInfo = 504,
+  CXCursor_Identifier = 505,
+
   CXCursor_FirstPreprocessing = CXCursor_PreprocessingDirective,
-  CXCursor_LastPreprocessing = CXCursor_InclusionDirective,
+  CXCursor_LastPreprocessing = CXCursor_MacroInfo,
 
   /* Extra Declarations */
   /**
@@ -2254,14 +2245,31 @@ enum CXCursorKind {
    * a concept declaration.
    */
   CXCursor_ConceptDecl = 604,
+  /**
+   * a variable template declaration.
+   */
+  CXCursor_VarTemplateDecl = 605,
+  /**
+   * a variable template full specialization declaration.
+   */
+  CXCursor_VarTemplateFullSpecialization = 606,
+  /**
+   * a variable template partial specialization declaration.
+   */
+  CXCursor_VarTemplatePartialSpecialization = 607,
 
   CXCursor_FirstExtraDecl = CXCursor_ModuleImportDecl,
-  CXCursor_LastExtraDecl = CXCursor_ConceptDecl,
+  CXCursor_LastExtraDecl = CXCursor_VarTemplatePartialSpecialization,
 
   /**
    * A code completion overload candidate.
    */
-  CXCursor_OverloadCandidate = 700
+  CXCursor_OverloadCandidate = 700,
+
+  /**
+   * A template argument.
+   */
+  CXCursor_TemplateArgument = 800,
 };
 
 /**
@@ -2627,11 +2635,11 @@ CINDEX_LINKAGE unsigned clang_CXCursorSet_insert(CXCursorSet cset,
                                                  CXCursor cursor);
 
 /**
- * Determine the semantic parent of the given cursor.
+ * Determine the semantic parent_scope of the given cursor.
  *
- * The semantic parent of a cursor is the cursor that semantically contains
+ * The semantic parent_scope of a cursor is the cursor that semantically contains
  * the given \p cursor. For many declarations, the lexical and semantic parents
- * are equivalent (the lexical parent is returned by
+ * are equivalent (the lexical parent_scope is returned by
  * \c clang_getCursorLexicalParent()). They diverge when declarations or
  * definitions are provided out-of-line. For example:
  *
@@ -2643,13 +2651,13 @@ CINDEX_LINKAGE unsigned clang_CXCursorSet_insert(CXCursorSet cset,
  * void C::f() { }
  * \endcode
  *
- * In the out-of-line definition of \c C::f, the semantic parent is
- * the class \c C, of which this function is a member. The lexical parent is
+ * In the out-of-line definition of \c C::f, the semantic parent_scope is
+ * the class \c C, of which this function is a member. The lexical parent_scope is
  * the place where the declaration actually occurs in the source code; in this
  * case, the definition occurs in the translation unit. In general, the
- * lexical parent for a given entity can change without affecting the semantics
- * of the program, and the lexical parent of different declarations of the
- * same entity may be different. Changing the semantic parent of a declaration,
+ * lexical parent_scope for a given entity can change without affecting the semantics
+ * of the program, and the lexical parent_scope of different declarations of the
+ * same entity may be different. Changing the semantic parent_scope of a declaration,
  * on the other hand, can have a major impact on semantics, and redeclarations
  * of a particular entity should all have the same semantic context.
  *
@@ -2657,16 +2665,16 @@ CINDEX_LINKAGE unsigned clang_CXCursorSet_insert(CXCursorSet cset,
  * semantic context, while the lexical context of the first \c C::f is \c C
  * and the lexical context of the second \c C::f is the translation unit.
  *
- * For global declarations, the semantic parent is the translation unit.
+ * For global declarations, the semantic parent_scope is the translation unit.
  */
 CINDEX_LINKAGE CXCursor clang_getCursorSemanticParent(CXCursor cursor);
 
 /**
- * Determine the lexical parent of the given cursor.
+ * Determine the lexical parent_scope of the given cursor.
  *
- * The lexical parent of a cursor is the cursor in which the given \p cursor
+ * The lexical parent_scope of a cursor is the cursor in which the given \p cursor
  * was actually written. For many declarations, the lexical and semantic parents
- * are equivalent (the semantic parent is returned by
+ * are equivalent (the semantic parent_scope is returned by
  * \c clang_getCursorSemanticParent()). They diverge when declarations or
  * definitions are provided out-of-line. For example:
  *
@@ -2678,13 +2686,13 @@ CINDEX_LINKAGE CXCursor clang_getCursorSemanticParent(CXCursor cursor);
  * void C::f() { }
  * \endcode
  *
- * In the out-of-line definition of \c C::f, the semantic parent is
- * the class \c C, of which this function is a member. The lexical parent is
+ * In the out-of-line definition of \c C::f, the semantic parent_scope is
+ * the class \c C, of which this function is a member. The lexical parent_scope is
  * the place where the declaration actually occurs in the source code; in this
  * case, the definition occurs in the translation unit. In general, the
- * lexical parent for a given entity can change without affecting the semantics
- * of the program, and the lexical parent of different declarations of the
- * same entity may be different. Changing the semantic parent of a declaration,
+ * lexical parent_scope for a given entity can change without affecting the semantics
+ * of the program, and the lexical parent_scope of different declarations of the
+ * same entity may be different. Changing the semantic parent_scope of a declaration,
  * on the other hand, can have a major impact on semantics, and redeclarations
  * of a particular entity should all have the same semantic context.
  *
@@ -2692,7 +2700,7 @@ CINDEX_LINKAGE CXCursor clang_getCursorSemanticParent(CXCursor cursor);
  * semantic context, while the lexical context of the first \c C::f is \c C
  * and the lexical context of the second \c C::f is the translation unit.
  *
- * For declarations written in the global scope, the lexical parent is
+ * For declarations written in the global scope, the lexical parent_scope is
  * the translation unit.
  */
 CINDEX_LINKAGE CXCursor clang_getCursorLexicalParent(CXCursor cursor);
@@ -2980,9 +2988,11 @@ enum CXTypeKind {
   CXType_Atomic = 177,
   CXType_BTFTagAttributed = 178,
 
-  // HLSL Types
-  CXType_HLSLResource = 179,
-  CXType_HLSLAttributedResource = 180
+  CXType_DependentName = 179,
+  CXType_TemplateTypeParm = 180,
+  CXType_SubstTemplateTypeParm = 181,
+  CXType_TemplateSpecialization = 182,
+  CXType_Decltype = 183,
 };
 
 /**
@@ -3124,7 +3134,7 @@ CINDEX_LINKAGE CXCursor clang_Cursor_getArgument(CXCursor C, unsigned i);
  * See the definition of llvm::clang::TemplateArgument::ArgKind for full
  * element descriptions.
  */
-enum CXTemplateArgumentKind {
+typedef enum CXTemplateArgumentKind{
   CXTemplateArgumentKind_Null,
   CXTemplateArgumentKind_Type,
   CXTemplateArgumentKind_Declaration,
@@ -3136,7 +3146,7 @@ enum CXTemplateArgumentKind {
   CXTemplateArgumentKind_Pack,
   /* Indicates an error case, preventing the kind from being deduced. */
   CXTemplateArgumentKind_Invalid
-};
+} CXTemplateArgumentKind;
 
 /**
  * Returns the number of template args of a function, struct, or class decl
@@ -3263,6 +3273,11 @@ CINDEX_LINKAGE CXType clang_getCanonicalType(CXType T);
  * different level.
  */
 CINDEX_LINKAGE unsigned clang_isConstQualifiedType(CXType T);
+
+/**
+ * Get from a CXCursor that is a macro, a MacroInfo CXCursor (optimized access for Macro interrogation)
+ */
+CINDEX_LINKAGE CXCursor clang_Cursor_getMacroInfo(CXCursor C);
 
 /**
  * Determine whether a  CXCursor that is a macro, is
@@ -3518,6 +3533,74 @@ CINDEX_LINKAGE long long clang_getArraySize(CXType T);
  */
 CINDEX_LINKAGE CXType clang_Type_getNamedType(CXType T);
 
+CINDEX_LINKAGE CXType clang_Type_getDeducedType(CXType CT);
+
+enum CXTypeKeyword {
+  CXTypeKeyword_Struct,
+  CXTypeKeyword_Interface,
+  CXTypeKeyword_Union,
+  CXTypeKeyword_Class,
+  CXTypeKeyword_Enum,
+  CXTypeKeyword_Typename,
+  CXTypeKeyword_None
+};
+
+CINDEX_LINKAGE CXTypeKeyword clang_Type_getKeyword(CXType T);
+
+CINDEX_LINKAGE CXString clang_TypeKeyword_getSpelling(CXTypeKeyword TK);
+
+
+enum CXNestedKind {
+  CXNested_Invalid = -1,
+
+  CXNested_Identifier,
+  CXNested_Namespace,
+  CXNested_NamespaceAlias,
+  CXNested_TypeSpec,
+  CXNested_TypeSpecWithTemplate,
+  CXNested_Global,
+  CXNested_Super,
+
+  CXNested_DependentNameType = 100,
+  CXNested_DependentTemplateSpecializationType,
+  CXNested_DependentTemplateName,
+};
+
+typedef struct {
+  enum CXNestedKind kind;
+  void *data[2];
+} CXNested;
+
+struct CXIdentifier_;
+
+typedef const struct CXIdentifier_ *CXIdentifier;
+
+
+CINDEX_LINKAGE CXNested clang_Cursor_getDependentName(CXCursor CC);
+CINDEX_LINKAGE CXNested clang_Type_getDependentName(CXType CT);
+
+
+
+CINDEX_LINKAGE CXNestedKind clang_Nested_getKind(CXNested CN);
+
+/**
+ * Retrieve the prefixe nested part of a nested.
+ *
+ * If an invalid nested is passed in, an invalid CXNested is returned.
+ */
+CINDEX_LINKAGE CXNested clang_Nested_getPrefix(CXNested CN);
+
+/**
+ * Retrieve the identifier part of a nested.
+ *
+ * If an invalid nested is passed in, a null CXIdentifier is returned.
+ */
+CINDEX_LINKAGE CXIdentifier clang_Nested_getIdentifier(CXNested CN);
+
+CINDEX_LINKAGE CXType clang_Nested_getType(CXNested CN);     
+
+CINDEX_LINKAGE CXString clang_Identifier_getName(CXIdentifier CI);
+
 /**
  * Determine if a typedef is 'transparent' tag.
  *
@@ -3663,7 +3746,7 @@ CINDEX_LINKAGE CXType clang_Type_getValueType(CXType CT);
  * Return the offset of the field represented by the Cursor.
  *
  * If the cursor is not a field declaration, -1 is returned.
- * If the cursor semantic parent is not a record field declaration,
+ * If the cursor semantic parent_scope is not a record field declaration,
  *   CXTypeLayoutError_Invalid is returned.
  * If the field's type declaration is an incomplete type,
  *   CXTypeLayoutError_Incomplete is returned.
@@ -3717,6 +3800,29 @@ CINDEX_LINKAGE int clang_Type_getNumTemplateArguments(CXType T);
 CINDEX_LINKAGE CXType clang_Type_getTemplateArgumentAsType(CXType T,
                                                            unsigned i);
 
+
+CINDEX_LINKAGE enum CXTemplateArgumentKind
+clang_Type_getTemplateArgumentKind(CXType CT, unsigned I);
+
+CINDEX_LINKAGE long long clang_Type_getTemplateArgumentAsValue(CXType CT,
+                                                             unsigned I);
+CINDEX_LINKAGE unsigned long long
+clang_Type_getTemplateArgumentAsUnsignedValue(CXType CT, unsigned I);
+
+CINDEX_LINKAGE CXCursor clang_Type_getTemplateDeclaration(CXType CT);
+
+CINDEX_LINKAGE CXCursor clang_Type_getReplacedParameter(CXType CT);
+CINDEX_LINKAGE CXType clang_Type_getReplacementType(CXType CT);
+
+
+CINDEX_LINKAGE CXType clang_Type_getUnderlyingType(CXType CT);
+
+
+CINDEX_LINKAGE CXCursor clang_Cursor_getTemplated(CXCursor C);
+
+
+CINDEX_LINKAGE unsigned clang_Cursor_isCompleteDefinition(CXCursor C);
+
 /**
  * Retrieve the ref-qualifier kind of a function or method.
  *
@@ -3746,10 +3852,17 @@ enum CX_CXXAccessSpecifier {
  * Returns the access control level for the referenced object.
  *
  * If the cursor refers to a C++ declaration, its access control level within
- * its parent scope is returned. Otherwise, if the cursor refers to a base
+ * its parent_scope scope is returned. Otherwise, if the cursor refers to a base
  * specifier or access specifier, the specifier itself is returned.
  */
 CINDEX_LINKAGE enum CX_CXXAccessSpecifier clang_getCXXAccessSpecifier(CXCursor);
+
+
+/**
+ * Returns 1 if the base class specified by the cursor with kind
+ *   CX_CXXBaseSpecifier has no access control specified.
+ */
+CINDEX_LINKAGE unsigned clang_isCXXBaseSpecifierDefault(CXCursor);
 
 /**
  * Represents the storage classes as declared in the source. CX_SC_Invalid
@@ -3765,59 +3878,6 @@ enum CX_StorageClass {
   CX_SC_Auto,
   CX_SC_Register
 };
-
-/**
- * Represents a specific kind of binary operator which can appear at a cursor.
- */
-enum CX_BinaryOperatorKind {
-  CX_BO_Invalid = 0,
-  CX_BO_PtrMemD = 1,
-  CX_BO_PtrMemI = 2,
-  CX_BO_Mul = 3,
-  CX_BO_Div = 4,
-  CX_BO_Rem = 5,
-  CX_BO_Add = 6,
-  CX_BO_Sub = 7,
-  CX_BO_Shl = 8,
-  CX_BO_Shr = 9,
-  CX_BO_Cmp = 10,
-  CX_BO_LT = 11,
-  CX_BO_GT = 12,
-  CX_BO_LE = 13,
-  CX_BO_GE = 14,
-  CX_BO_EQ = 15,
-  CX_BO_NE = 16,
-  CX_BO_And = 17,
-  CX_BO_Xor = 18,
-  CX_BO_Or = 19,
-  CX_BO_LAnd = 20,
-  CX_BO_LOr = 21,
-  CX_BO_Assign = 22,
-  CX_BO_MulAssign = 23,
-  CX_BO_DivAssign = 24,
-  CX_BO_RemAssign = 25,
-  CX_BO_AddAssign = 26,
-  CX_BO_SubAssign = 27,
-  CX_BO_ShlAssign = 28,
-  CX_BO_ShrAssign = 29,
-  CX_BO_AndAssign = 30,
-  CX_BO_XorAssign = 31,
-  CX_BO_OrAssign = 32,
-  CX_BO_Comma = 33,
-  CX_BO_LAST = CX_BO_Comma
-};
-
-/**
- * \brief Returns the operator code for the binary operator.
- */
-CINDEX_LINKAGE enum CX_BinaryOperatorKind
-clang_Cursor_getBinaryOpcode(CXCursor C);
-
-/**
- * \brief Returns a string containing the spelling of the binary operator.
- */
-CINDEX_LINKAGE CXString
-clang_Cursor_getBinaryOpcodeStr(enum CX_BinaryOperatorKind Op);
 
 /**
  * Returns the storage class for a function or variable declaration.
@@ -3914,7 +3974,7 @@ enum CXChildVisitResult {
  *
  * This visitor function will be invoked for each cursor found by
  * clang_visitCursorChildren(). Its first argument is the cursor being
- * visited, its second argument is the parent visitor for that cursor,
+ * visited, its second argument is the parent_scope visitor for that cursor,
  * and its third argument is the client data provided to
  * clang_visitCursorChildren().
  *
@@ -3934,12 +3994,12 @@ typedef enum CXChildVisitResult (*CXCursorVisitor)(CXCursor cursor,
  * \c CXChildVisit_Recurse. The traversal may also be ended prematurely, if
  * the visitor returns \c CXChildVisit_Break.
  *
- * \param parent the cursor whose child may be visited. All kinds of
+ * \param parent_scope the cursor whose child may be visited. All kinds of
  * cursors can be visited, including invalid cursors (which, by
  * definition, have no children).
  *
  * \param visitor the visitor function that will be invoked for each
- * child of \p parent.
+ * child of \p parent_scope.
  *
  * \param client_data pointer data supplied by the client, which will
  * be passed to the visitor each time it is invoked.
@@ -3950,19 +4010,20 @@ typedef enum CXChildVisitResult (*CXCursorVisitor)(CXCursor cursor,
 CINDEX_LINKAGE unsigned clang_visitChildren(CXCursor parent,
                                             CXCursorVisitor visitor,
                                             CXClientData client_data);
+
 /**
  * Visitor invoked for each cursor found by a traversal.
  *
  * This visitor block will be invoked for each cursor found by
  * clang_visitChildrenWithBlock(). Its first argument is the cursor being
- * visited, its second argument is the parent visitor for that cursor.
+ * visited, its second argument is the parent_scope visitor for that cursor.
  *
  * The visitor should return one of the \c CXChildVisitResult values
  * to direct clang_visitChildrenWithBlock().
  */
 #if __has_feature(blocks)
 typedef enum CXChildVisitResult (^CXCursorVisitorBlock)(CXCursor cursor,
-                                                        CXCursor parent);
+                                                        CXCursor parent_scope);
 #else
 typedef struct _CXChildVisitResult *CXCursorVisitorBlock;
 #endif
@@ -4329,7 +4390,7 @@ CINDEX_LINKAGE unsigned clang_Cursor_getObjCDeclQualifiers(CXCursor C);
 CINDEX_LINKAGE unsigned clang_Cursor_isObjCOptional(CXCursor C);
 
 /**
- * Returns non-zero if the given cursor is a variadic function or method.
+ * Returns non-zero if the given cursor is a variadic macro, function or method.
  */
 CINDEX_LINKAGE unsigned clang_Cursor_isVariadic(CXCursor C);
 
@@ -4432,7 +4493,7 @@ CINDEX_LINKAGE CXFile clang_Module_getASTFile(CXModule Module);
 /**
  * \param Module a module object.
  *
- * \returns the parent of a sub-module or NULL if the given module is top-level,
+ * \returns the parent_scope of a sub-module or NULL if the given module is top-level,
  * e.g. for 'std.vector' it will return the 'std' module.
  */
 CINDEX_LINKAGE CXModule clang_Module_getParent(CXModule Module);
@@ -4897,6 +4958,14 @@ CINDEX_LINKAGE void clang_tokenize(CXTranslationUnit TU, CXSourceRange Range,
 CINDEX_LINKAGE void clang_annotateTokens(CXTranslationUnit TU, CXToken *Tokens,
                                          unsigned NumTokens, CXCursor *Cursors);
 
+
+/**
+ * Get the replacement tokens of a Macro.
+ */
+CINDEX_LINKAGE void clang_Cursor_macroReplacementTokens(CXCursor C,
+                                                        CXToken **Tokens,
+                                                        unsigned *NumTokens);
+
 /**
  * Free the given set of tokens.
  */
@@ -5249,19 +5318,19 @@ CINDEX_LINKAGE CXString clang_getCompletionAnnotation(
     CXCompletionString completion_string, unsigned annotation_number);
 
 /**
- * Retrieve the parent context of the given completion string.
+ * Retrieve the parent_scope context of the given completion string.
  *
- * The parent context of a completion string is the semantic parent of
+ * The parent_scope context of a completion string is the semantic parent_scope of
  * the declaration (if any) that the code completion represents. For example,
  * a code completion for an Objective-C method would have the method's class
  * or protocol as its context.
  *
- * \param completion_string The code completion string whose parent is
+ * \param completion_string The code completion string whose parent_scope is
  * being queried.
  *
  * \param kind DEPRECATED: always set to CXCursor_NotImplemented if non-NULL.
  *
- * \returns The name of the completion parent, e.g., "NSObject" if
+ * \returns The name of the completion parent_scope, e.g., "NSObject" if
  * the completion string represents a method in the NSObject class.
  */
 CINDEX_LINKAGE CXString clang_getCompletionParent(
@@ -6297,13 +6366,13 @@ typedef struct {
    */
   const CXIdxEntityInfo *referencedEntity;
   /**
-   * Immediate "parent" of the reference. For example:
+   * Immediate "parent_scope" of the reference. For example:
    *
    * \code
    * Foo *var;
    * \endcode
    *
-   * The parent of reference of type 'Foo' is the variable 'var'.
+   * The parent_scope of reference of type 'Foo' is the variable 'var'.
    * For references inside statement bodies of functions/methods,
    * the parentEntity will be the function/method.
    */
@@ -6599,6 +6668,63 @@ typedef enum CXVisitorResult (*CXFieldVisitor)(CXCursor C,
  */
 CINDEX_LINKAGE unsigned clang_Type_visitFields(CXType T, CXFieldVisitor visitor,
                                                CXClientData client_data);
+
+
+
+typedef enum CXVisitorResult (*CXEltVisitor)(CXCursor C,
+                                             CXClientData client_data);
+
+struct CXIntegral_;
+
+typedef const struct CXIntegral_ *CXIntegral;
+
+typedef void (*CXIntVisitor)(CXIntegral Integral, CXClientData client_data);
+
+
+typedef enum {
+  CXVisitOption_TemplateArguments = 1,
+  CXVisitOption_TemplateParameters = 2,
+  CXVisitOption_Bases = 3,
+  CXVisitOption_DeclContext = 4,
+} CXVisitOption;
+
+
+CINDEX_LINKAGE unsigned clang_Cursor_visitSelected(CXCursor parent, CXVisitOption option,
+                                                   CXCursorVisitor visitor,
+                                                   CXClientData client_data);
+
+CINDEX_LINKAGE unsigned
+clang_Type_visitTemplateArguments(CXType parent, CXEltVisitor visitor,
+                                  CXClientData client_data);
+
+CINDEX_LINKAGE CXTemplateArgumentKind
+clang_Cursor_getTemplateArgumentKind_(CXCursor C);
+
+
+
+CINDEX_LINKAGE unsigned
+clang_Type_visitTemplateArguments(CXType parent, CXEltVisitor visitor,
+                                  CXClientData client_data);
+
+
+CINDEX_LINKAGE unsigned clang_Cursor_visitIntegral(CXCursor C,
+                                                   CXIntVisitor Visitor,
+                                                   CXClientData client_data);
+
+CINDEX_LINKAGE CXString clang_Integral_getSpelling(CXIntegral Int);
+CINDEX_LINKAGE unsigned clang_Integral_isSigned(CXIntegral Int);
+CINDEX_LINKAGE unsigned clang_Integral_isRepresentableByInt64(CXIntegral Int);
+CINDEX_LINKAGE long long clang_Integral_getSigned(CXIntegral Int);
+CINDEX_LINKAGE unsigned long long clang_Integral_getUnsigned(CXIntegral Int);
+
+CINDEX_LINKAGE unsigned clang_isTemplateArgument(enum CXCursorKind Kind);
+
+CINDEX_LINKAGE CXCursor clang_Cursor_getDeclaration(CXCursor C);
+CINDEX_LINKAGE CXCursor clang_Cursor_getExpression(CXCursor C);
+CINDEX_LINKAGE CXCursor clang_Type_getExpression(CXType CT); 
+
+
+
 
 /**
  * Describes the kind of binary operators.

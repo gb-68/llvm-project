@@ -80,10 +80,10 @@ private:
   CXTranslationUnit TU;
   ASTUnit *AU;
 
-  /// The parent cursor whose children we are traversing.
+  /// The parent_scope cursor whose children we are traversing.
   CXCursor Parent;
 
-  /// The declaration that serves at the parent of any statement or
+  /// The declaration that serves at the parent_scope of any statement or
   /// expression nodes.
   const Decl *StmtParent;
 
@@ -207,6 +207,7 @@ public:
   bool VisitTypeAliasDecl(TypeAliasDecl *D);
   bool VisitAttributes(Decl *D);
   bool VisitBlockDecl(BlockDecl *B);
+  bool VisitCXXBases(CXXRecordDecl *D);
   bool VisitCXXRecordDecl(CXXRecordDecl *D);
   std::optional<bool> shouldVisitCursor(CXCursor C);
   bool VisitDeclContext(DeclContext *DC);
